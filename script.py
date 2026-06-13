@@ -1,11 +1,15 @@
 import sqlite3
+import os
 
 
-DB_NAME = "clinic.db"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_NAME = os.path.join(BASE_DIR, "clinic.db")
 
 
 def connect():
-    return sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect(DB_NAME)
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
 
 
 def create_tables():
@@ -57,6 +61,32 @@ def create_tables():
     conn.close()
 
 
+def input_int(message):
+    try:
+        return int(input(message))
+    except ValueError:
+        print("Ошибка: нужно ввести число.")
+        return None
+
+
+def patient_exists(patient_id):
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM patients WHERE id = ?", (patient_id,))
+    result = cursor.fetchone()
+    conn.close()
+    return result is not None
+
+
+def doctor_exists(doctor_id):
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM doctors WHERE id = ?", (doctor_id,))
+    result = cursor.fetchone()
+    conn.close()
+    return result is not None
+
+
 def add_patient():
     full_name = input("Введите ФИО пациента: ")
     phone = input("Введите телефон пациента: ")
@@ -69,10 +99,12 @@ def add_patient():
         (full_name, phone)
     )
 
+    patient_id = cursor.lastrowid
+
     conn.commit()
     conn.close()
 
-    print("Пациент успешно добавлен.")
+    print(f"Пациент успешно зарегистрирован. Ваш ID: {patient_id}")
 
 
 def add_doctor():
@@ -105,17 +137,47 @@ def show_doctors():
 
     if not doctors:
         print("Врачей пока нет.")
-        return
+        return False
 
     print("\nСписок врачей:")
     for doctor in doctors:
         print(f"{doctor[0]}. {doctor[1]} | {doctor[2]} | кабинет {doctor[3]}")
 
+    return True
+
+
+def show_patients():
+    conn = connect()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM patients")
+    patients = cursor.fetchall()
+
+    conn.close()
+
+    if not patients:
+        print("Пациентов пока нет.")
+        return False
+
+    print("\nСписок пациентов:")
+    for patient in patients:
+        print(f"{patient[0]}. {patient[1]} | телефон: {patient[2]}")
+
+    return True
+
 
 def add_schedule():
-    show_doctors()
+    if not show_doctors():
+        return
 
-    doctor_id = int(input("Введите ID врача: "))
+    doctor_id = input_int("Введите ID врача: ")
+    if doctor_id is None:
+        return
+
+    if not doctor_exists(doctor_id):
+        print("Ошибка: врача с таким ID нет.")
+        return
+
     date = input("Введите дату приёма, например 2026-06-15: ")
     time = input("Введите время приёма, например 14:30: ")
 
@@ -134,9 +196,12 @@ def add_schedule():
 
 
 def show_schedule():
-    show_doctors()
+    if not show_doctors():
+        return
 
-    doctor_id = int(input("Введите ID врача: "))
+    doctor_id = input_int("Введите ID врача: ")
+    if doctor_id is None:
+        return
 
     conn = connect()
     cursor = conn.cursor()
@@ -160,30 +225,25 @@ def show_schedule():
         print(f"{item[0]}. Врач: {item[1]} | Дата: {item[2]} | Время: {item[3]}")
 
 
-def show_patients():
-    conn = connect()
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT * FROM patients")
-    patients = cursor.fetchall()
-
-    conn.close()
-
-    if not patients:
-        print("Пациентов пока нет.")
+def create_appointment_for_patient():
+    patient_id = input_int("Введите ваш ID пациента: ")
+    if patient_id is None:
         return
 
-    print("\nСписок пациентов:")
-    for patient in patients:
-        print(f"{patient[0]}. {patient[1]} | телефон: {patient[2]}")
+    if not patient_exists(patient_id):
+        print("Пациент с таким ID не найден. Сначала зарегистрируйтесь.")
+        return
 
+    if not show_doctors():
+        return
 
-def create_appointment():
-    show_patients()
-    patient_id = int(input("Введите ID пациента: "))
+    doctor_id = input_int("Введите ID врача: ")
+    if doctor_id is None:
+        return
 
-    show_doctors()
-    doctor_id = int(input("Введите ID врача: "))
+    if not doctor_exists(doctor_id):
+        print("Ошибка: врача с таким ID нет.")
+        return
 
     conn = connect()
     cursor = conn.cursor()
@@ -205,7 +265,10 @@ def create_appointment():
     for schedule in schedules:
         print(f"{schedule[0]}. Дата: {schedule[1]} | Время: {schedule[2]}")
 
-    schedule_id = int(input("Введите ID времени приёма: "))
+    schedule_id = input_int("Введите ID времени приёма: ")
+    if schedule_id is None:
+        conn.close()
+        return
 
     cursor.execute("""
         SELECT id
@@ -237,7 +300,7 @@ def create_appointment():
     print("Запись на приём успешно создана.")
 
 
-def show_appointments():
+def show_all_appointments():
     conn = connect()
     cursor = conn.cursor()
 
@@ -254,6 +317,7 @@ def show_appointments():
         JOIN patients ON appointments.patient_id = patients.id
         JOIN doctors ON appointments.doctor_id = doctors.id
         JOIN schedules ON appointments.schedule_id = schedules.id
+        ORDER BY schedules.date, schedules.time
     """)
 
     appointments = cursor.fetchall()
@@ -261,9 +325,9 @@ def show_appointments():
 
     if not appointments:
         print("Записей на приём пока нет.")
-        return
+        return False
 
-    print("\nЗаписи на приём:")
+    print("\nВсе записи на приём:")
     for app in appointments:
         print(
             f"{app[0]}. Пациент: {app[1]} | "
@@ -274,11 +338,63 @@ def show_appointments():
             f"Статус: {app[6]}"
         )
 
+    return True
 
-def cancel_appointment():
-    show_appointments()
 
-    appointment_id = int(input("Введите ID записи для отмены: "))
+def show_my_appointments():
+    patient_id = input_int("Введите ваш ID пациента: ")
+    if patient_id is None:
+        return
+
+    if not patient_exists(patient_id):
+        print("Пациент с таким ID не найден.")
+        return
+
+    conn = connect()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT 
+            appointments.id,
+            doctors.full_name,
+            doctors.specialization,
+            doctors.cabinet,
+            schedules.date,
+            schedules.time,
+            appointments.status
+        FROM appointments
+        JOIN doctors ON appointments.doctor_id = doctors.id
+        JOIN schedules ON appointments.schedule_id = schedules.id
+        WHERE appointments.patient_id = ?
+        ORDER BY schedules.date, schedules.time
+    """, (patient_id,))
+
+    appointments = cursor.fetchall()
+    conn.close()
+
+    if not appointments:
+        print("У вас пока нет записей.")
+        return
+
+    print("\nВаши записи:")
+    for app in appointments:
+        print(
+            f"{app[0]}. Врач: {app[1]} | "
+            f"Специальность: {app[2]} | "
+            f"Кабинет: {app[3]} | "
+            f"Дата: {app[4]} | "
+            f"Время: {app[5]} | "
+            f"Статус: {app[6]}"
+        )
+
+
+def cancel_any_appointment():
+    if not show_all_appointments():
+        return
+
+    appointment_id = input_int("Введите ID записи для отмены: ")
+    if appointment_id is None:
+        return
 
     conn = connect()
     cursor = conn.cursor()
@@ -315,37 +431,155 @@ def cancel_appointment():
     print("Запись отменена. Время снова доступно.")
 
 
-def menu():
+def cancel_my_appointment():
+    patient_id = input_int("Введите ваш ID пациента: ")
+    if patient_id is None:
+        return
+
+    if not patient_exists(patient_id):
+        print("Пациент с таким ID не найден.")
+        return
+
+    conn = connect()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT 
+            appointments.id,
+            doctors.full_name,
+            schedules.date,
+            schedules.time
+        FROM appointments
+        JOIN doctors ON appointments.doctor_id = doctors.id
+        JOIN schedules ON appointments.schedule_id = schedules.id
+        WHERE appointments.patient_id = ? AND appointments.status = 'active'
+        ORDER BY schedules.date, schedules.time
+    """, (patient_id,))
+
+    appointments = cursor.fetchall()
+
+    if not appointments:
+        print("У вас нет активных записей.")
+        conn.close()
+        return
+
+    print("\nВаши активные записи:")
+    for app in appointments:
+        print(f"{app[0]}. Врач: {app[1]} | Дата: {app[2]} | Время: {app[3]}")
+
+    appointment_id = input_int("Введите ID записи для отмены: ")
+    if appointment_id is None:
+        conn.close()
+        return
+
+    cursor.execute("""
+        SELECT schedule_id
+        FROM appointments
+        WHERE id = ? AND patient_id = ? AND status = 'active'
+    """, (appointment_id, patient_id))
+
+    result = cursor.fetchone()
+
+    if result is None:
+        print("Ошибка: активная запись не найдена.")
+        conn.close()
+        return
+
+    schedule_id = result[0]
+
+    cursor.execute("""
+        UPDATE appointments
+        SET status = 'cancelled'
+        WHERE id = ?
+    """, (appointment_id,))
+
+    cursor.execute("""
+        UPDATE schedules
+        SET is_available = 1
+        WHERE id = ?
+    """, (schedule_id,))
+
+    conn.commit()
+    conn.close()
+
+    print("Ваша запись отменена. Время снова доступно.")
+
+
+def patient_menu():
     while True:
-        print("\n=== Система записи к врачу ===")
-        print("1. Добавить пациента")
-        print("2. Добавить врача")
-        print("3. Показать врачей")
-        print("4. Добавить расписание врачу")
-        print("5. Показать свободное расписание")
-        print("6. Записать пациента на приём")
-        print("7. Показать все записи")
-        print("8. Отменить запись")
-        print("0. Выход")
+        print("\n=== Режим пациента ===")
+        print("1. Зарегистрироваться")
+        print("2. Показать врачей")
+        print("3. Показать свободное расписание врача")
+        print("4. Записаться на приём")
+        print("5. Посмотреть мои записи")
+        print("6. Отменить мою запись")
+        print("0. Назад")
 
         choice = input("Выберите действие: ")
 
         if choice == "1":
             add_patient()
         elif choice == "2":
+            show_doctors()
+        elif choice == "3":
+            show_schedule()
+        elif choice == "4":
+            create_appointment_for_patient()
+        elif choice == "5":
+            show_my_appointments()
+        elif choice == "6":
+            cancel_my_appointment()
+        elif choice == "0":
+            break
+        else:
+            print("Неверный пункт меню.")
+
+
+def admin_menu():
+    while True:
+        print("\n=== Режим администратора ===")
+        print("1. Добавить врача")
+        print("2. Добавить расписание врачу")
+        print("3. Показать всех врачей")
+        print("4. Показать всех пациентов")
+        print("5. Показать все записи")
+        print("6. Отменить любую запись")
+        print("0. Назад")
+
+        choice = input("Выберите действие: ")
+
+        if choice == "1":
             add_doctor()
+        elif choice == "2":
+            add_schedule()
         elif choice == "3":
             show_doctors()
         elif choice == "4":
-            add_schedule()
+            show_patients()
         elif choice == "5":
-            show_schedule()
+            show_all_appointments()
         elif choice == "6":
-            create_appointment()
-        elif choice == "7":
-            show_appointments()
-        elif choice == "8":
-            cancel_appointment()
+            cancel_any_appointment()
+        elif choice == "0":
+            break
+        else:
+            print("Неверный пункт меню.")
+
+
+def main_menu():
+    while True:
+        print("\n=== Система записи к врачу ===")
+        print("1. Режим пациента")
+        print("2. Режим администратора")
+        print("0. Выход")
+
+        choice = input("Выберите режим: ")
+
+        if choice == "1":
+            patient_menu()
+        elif choice == "2":
+            admin_menu()
         elif choice == "0":
             print("Выход из программы.")
             break
@@ -354,4 +588,5 @@ def menu():
 
 
 create_tables()
-menu()
+print("База данных создана или уже существует:", DB_NAME)
+main_menu()
